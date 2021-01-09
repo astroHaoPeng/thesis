@@ -30,7 +30,7 @@ def measurement_update(xk, g):
 
     yk2 = 2 * np.arctan2(xk[3], xk[0])
 
-    return np.array([yk[0], yk[1], yk[2], yk2])
+    return np.array([yk[0], yk[1], yk[2]])#, yk2])
 
 
 def F_func(uk, ts):
@@ -53,8 +53,8 @@ def H_func(xk, g):
     wk, xk, yk, zk = xk / np.linalg.norm(xk)
     H_k = 2 * g * np.array([[-yk, zk, -wk, xk],
                                [xk, wk, zk, yk],
-                               [wk, -xk, -yk, zk],
-                               [-2 * zk / ((wk ** 2) + (zk ** 2)), 0, 0, 2 * wk / ((wk ** 2) + (zk ** 2))]])
+                               [wk, -xk, -yk, zk]])#,
+                               #[-2 * zk / ((wk ** 2) + (zk ** 2)), 0, 0, 2 * wk / ((wk ** 2) + (zk ** 2))]])
 
     return H_k
 
@@ -70,8 +70,8 @@ def ekf(xkm1, uk, yk1, yk2, V, W, P, g, ts):
     K = P_prior @ np.transpose(H_k) @ np.linalg.inv((H_k @ P_prior @ np.transpose(H_k) + W))
 
     # Measurement update of the state estimate
-    #x_pos = x_prior + K @ (np.array([yk1[0], yk1[1], yk1[2]]) - measurement_update(x_prior, g))
-    x_pos = x_prior + K.dot((np.array([yk1[0], yk1[1], yk1[2], yk2]) - measurement_update(x_prior, g)))
+    x_pos = x_prior + K.dot((np.array([yk1[0], yk1[1], yk1[2]]) - measurement_update(x_prior, g)))
+    # x_pos = x_prior + K.dot((np.array([yk1[0], yk1[1], yk1[2], yk2]) - measurement_update(x_prior, g)))
     x_pos = x_pos / np.linalg.norm(x_pos)
     A = np.identity(4) - K @ H_k
     P_pos = A @ P_prior @ np.transpose(A) + K @ W @ np.transpose(K)

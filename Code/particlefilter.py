@@ -72,7 +72,7 @@ class ParticleFilter:
         variance = np.array([np.var(xkm1[0, :]), np.var(xkm1[1, :]), np.var(xkm1[2, :])])
 
         for i in range(0, self.ns):
-            xk[:, i] = system_update3(xkm1[:, i], uk, ts, sigma=0.01)
+            xk[:, i] = system_update2(xkm1[:, i], uk, ts, sigma=0.01)
 
             if yk.size == 0:
                 wk[i] = 1 / self.ns
@@ -132,8 +132,8 @@ def system_update2(xkm1, uk, ts, sigma):
     y = 0.1 * xkm1[2] * ts * (2 * np.random.rand() - 1)
 
     x = np.zeros(3)
-    x[0] = xkm1[0] + xkm1[2] * ts * np.cos(uk[1]) - y * np.sin(uk[1])
-    x[1] = xkm1[1] + xkm1[2] * ts * np.sin(uk[1]) + y * np.cos(uk[1])
+    x[0] = xkm1[0] + xkm1[2] * ts * np.cos(uk[1]) #- y * np.sin(uk[1])
+    x[1] = xkm1[1] + xkm1[2] * ts * np.sin(uk[1]) #+ y * np.cos(uk[1])
     x[2] = xkm1[2] + uk[0] * ts + vk
 
     return x

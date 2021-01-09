@@ -3,7 +3,7 @@ from numpy import nan as nan
 import matplotlib.pyplot as plt
 from dynamics.twipr_dynamics import Twipr3D, ModelMichael
 from sensormodel import Accelerometer, Gyroscope, Encoder
-from particlefilter import ParticleFilter, one_wheel_slip_detection, two_wheel_slip_detection, weighted_variance
+from particlefilter import ParticleFilter, one_wheel_slip_detection, two_wheel_slip_detection
 import quaternionestimation
 import quaternions as qt
 import geometricpath as path
@@ -78,6 +78,7 @@ omegak = np.zeros((3, N))               # Angular velocity of the robot
 gyro = np.zeros((3, N))                 # Measurements
 qk2 = np.zeros((4, N))
 qk2[0, :] = 1                           # Orientation of the robot
+gyro_bias = np.zeros((3, N))            # Gyroscope bias
 
 # Encoders
 enc_meas = np.zeros((4, N))             # Measurements
@@ -87,6 +88,7 @@ gyro_s = np.zeros((3, N))               # Gyroscope measurements in navigation f
 acc_s = np.zeros((3, N))                # Accelerometer measurements in navigation frame
 acc_s[:, 0] = [0, 0, 9.81]
 head_enc = 0                            # Heading given by the encoders
+head_from_enc = np.zeros(N)
 xh = np.zeros((4, N))                   # Orientation state estimate
 xh[0, :] = 1
 Ph = np.identity(4) * 1
@@ -132,18 +134,30 @@ for i in range(1, 1000):
 acc_bias = np.array([np.mean(acceleration_cal[0, :]), np.mean(acceleration_cal[1, :]), np.mean(acceleration_cal[2, :])])
 gyr_bias = np.array([np.mean(gyro_cal[0, :]), np.mean(gyro_cal[1, :]), np.mean(gyro_cal[2, :])])
 
-# fig, [globalplot, partplot] = plt.subplots(1, 2)
-fig = plt.figure()
-plt.get_current_fig_manager().window.showMaximized()
-left, width = -0.1, 0.8
-bottom, height = 0.1, 0.8
-left_h, width_h = left + 0.6, 0.5
-bottom_h, height_h = left + height / 2, 0.5
-rect_cones = [left, bottom, width, height]
-rect_box = [left_h, bottom_h, width_h, height_h]
-globalplot = plt.axes(rect_cones)
-partplot = plt.axes(rect_box)
-prev_distancia = 0
+# PLOTS
+plot_gyroscope_measurements = False
+plot_gyroscope_bias = True
+plot_accelerometer_measurements = False
+plot_slip_detection = False
+plot_execution_time = False
+plot_heading_and_inclination = True
+plot_position = True
+interactive_plot = True
+
+if interactive_plot:
+    # fig, [globalplot, partplot] = plt.subplots(1, 2)
+    fig = plt.figure()
+    # plt.get_current_fig_manager().window.showMaximized()
+    plt.get_current_fig_manager().window.state('zoomed')
+    left, width = -0.1, 0.8
+    bottom, height = 0.1, 0.8
+    left_h, width_h = left + 0.6, 0.5
+    bottom_h, height_h = left + height / 2, 0.5
+    rect_cones = [left, bottom, width, height]
+    rect_box = [left_h, bottom_h, width_h, height_h]
+    globalplot = plt.axes(rect_cones)
+    partplot = plt.axes(rect_box)
+    prev_distancia = 0
 
 for i in range(1, N):
     psi = x2[2, i - 1]
@@ -158,7 +172,7 @@ for i in range(1, N):
     v_feed = qt.clip(v_feed, -3, 3)
     w_feed = qt.clip(w_feed, -5, 5)
 
-    if 160 <= i <= 200:
+    if 150 <= i <= 200:
         v_feed = 0
         w_feed = 0
     # [y, x2[:, i]] = robot.simulate_step(w[:, i], mode)
@@ -168,8 +182,12 @@ for i in range(1, N):
     acceleration[:, i], qk[:, i], omegak[:, i] = accelerometer.get_measurement(robot, qk[:, i - 1], x2[1, i - 1], omegak[:, i - 1])
 
     gyro[:, i], qk2[:, i] = gyroscope.get_measurement(robot, qk2[:, i - 1])
+    gyro_bias[0, i] = gyroscope.bias[0] + gyroscope.bias_instability[0]
+    gyro_bias[1, i] = gyroscope.bias[1] + gyroscope.bias_instability[1]
+    gyro_bias[2, i] = gyroscope.bias[2] + gyroscope.bias_instability[2]
 
     enc_meas[:, i] = encoder.get_measurement(robot)
+    head_from_enc[i] = heading[0, i - 1] + (enc_meas[-1, i] - enc_meas[-2, i]) * encoder.r * robot.Ts / encoder.d
 
     # Bias removal
     acceleration[:, i] -= acc_bias
@@ -210,11 +228,11 @@ for i in range(1, N):
     gyr = R_IMU_b @ gyro[:, i]
 
     # head_enc += robot.Ts * 0.055 * (enc_meas[3, i] - enc_meas[2, i]) / 0.25
-    head_enc = heading[0, i - 1] + robot.Ts * 0.055 * (enc_meas[3, i] - enc_meas[2, i]) / 0.25
+    head_enc = heading[0, i - 1] + robot.Ts * encoder.r * (enc_meas[3, i] - enc_meas[2, i]) / encoder.d
 
     V = np.identity(4) * 0.1
-    W = np.identity(4) * 1000000
-    W[3, 3] = 0.00001
+    W = np.identity(3) * 1000000
+    #W[3, 3] = 0.00001
     if slipping_one[i] == 1:
         W[3, 3] = 1000000000
 
@@ -244,6 +262,7 @@ for i in range(1, N):
         slipping_two[i] = two_wheel_slip_detection(encoder.r, x_pf[-1, i - 1], np.array([enc_meas[-1, i], enc_meas[-2, i]]), a_T[0], robot.Ts)
 
     uk = np.array([a_T[0], heading[0, i], x2[5, i]])
+    # uk = np.array([a_T[0], x2[4, i], x2[5, i]])       # Use real heading
 
     # First Method
     # if slipping_two[i] + slipping_one[i] >= 1:
@@ -258,7 +277,7 @@ for i in range(1, N):
 
     # Second Method
     yk = np.array([])
-    if i % 1 == 0 and i <= 100 or i >= 450:
+    if i % 1 == 0 and i <= 50 or i >= 450:
         yk = np.append(yk, [real_position[0, i], real_position[1, i]])
     if slipping_two[i] + slipping_one[i] == 0:
         yk = np.append(yk, vel_enc[i])
@@ -272,42 +291,44 @@ for i in range(1, N):
         # conf_interval[:, 0] = x_pf[:, i] - 1.96 * np.sqrt(variance / pf.ns)
 
         # Plotting
-        plt.ion()
-        globalplot.clear()
-        partplot.clear()
-        for k in range(0, pf.ns):
-            partplot.plot(pf.particles[0, k], pf.particles[1, k], 'bo', alpha=pf.w[k] * 20, label='_nolegend_')
-            # partplot.plot(pf.particles[0, k], pf.particles[1, k], 'bo', alpha=0.5, label='_nolegend_')
-        partplot.plot(real_position[0, 0:i + 1], real_position[1, 0:i + 1], 'r', label='Real position')
-        globalplot.plot(real_position[0, 0:i + 1], real_position[1, 0:i + 1], 'r', label='Real position')
-        globalplot.plot(x_pf[0, 0:j + 1], x_pf[1, 0:j + 1], 'y--', label='Estimated position')
-        partplot.plot(x_pf[0, 0:j + 1], x_pf[1, 0:j + 1], 'y', label='Estimated position')
-        partplot.plot(x_pf[0, j], x_pf[1, j], 'yo', markersize=5, alpha=0.8, label='_nolegend_')
-        globalplot.axis('square')
-        partplot.axis('square')
-        globalplot.set_xlim([-0.1, 2.2])
-        globalplot.set_ylim([-0.1, 2.2])
-        dist_x = max(abs(min(pf.particles[0, :]) - x_pf[0, j]), abs(max(pf.particles[0, :]) - x_pf[0, j]))
-        dist_y = max(abs(min(pf.particles[1, :]) - x_pf[1, j]), abs(max(pf.particles[1, :]) - x_pf[1, j]))
-        distancia2 = max(dist_x, dist_y, 0.05)
-        distancia = max(dist_x, dist_y, 0.05, prev_distancia)
-        # ax[1].set_xlim([real_position[0, i] - 0.05, real_position[0, i] + 0.05])
-        # ax[1].set_ylim([real_position[1, i] - 0.05, real_position[1, i] + 0.05])
-        # partplot.set_xlim([x_pf[0, j] - 0.05, x_pf[0, j] + 0.05])
-        # partplot.set_ylim([x_pf[1, j] - 0.05, x_pf[1, j] + 0.05])
-        partplot.set_xlim([x_pf[0, j] - distancia, x_pf[0, j] + distancia])
-        partplot.set_ylim([x_pf[1, j] - distancia, x_pf[1, j] + distancia])
-        if 100 <= i <= 300:
-            fig.suptitle('Time step: ' + str(i) + ' (time = ' + str(round(i * robot.Ts, 2)) + ' sec)' + '\n' + ' (No OptiTrack measurements)')
-        else:
-            fig.suptitle('Time step: ' + str(i) + ' (time = ' + str(round(i * robot.Ts, 2)) + ' sec)')
-        partplot.set_title("Particles = " + str(pf.ns))
-        globalplot.legend(loc='lower right')
-        globalplot.set_xlabel('x [m]'), partplot.set_xlabel('x [m]')
-        globalplot.set_ylabel('y [m]'), partplot.set_ylabel('y [m]')
-        prev_distancia = distancia2
-        plt.draw()
-        plt.pause(0.01)
+        if interactive_plot:
+            plt.ion()
+            globalplot.clear()
+            partplot.clear()
+            for k in range(0, pf.ns):
+                partplot.plot(pf.particles[0, k], pf.particles[1, k], 'bo', alpha=pf.w[k] * 20, label='_nolegend_')
+                # partplot.plot(pf.particles[0, k], pf.particles[1, k], 'bo', alpha=0.5, label='_nolegend_')
+            partplot.plot(real_position[0, 0:i + 1], real_position[1, 0:i + 1], 'r', label='Real position')
+            globalplot.plot(real_position[0, 0:i + 1], real_position[1, 0:i + 1], 'r', label='Real position')
+            globalplot.plot(x_pf[0, 0:j + 1], x_pf[1, 0:j + 1], 'y--', label='Estimated position')
+            partplot.plot(x_pf[0, 0:j + 1], x_pf[1, 0:j + 1], 'y', label='Estimated position')
+            partplot.plot(x_pf[0, j], x_pf[1, j], 'yo', markersize=5, alpha=0.8, label='_nolegend_')
+            globalplot.axis('square')
+            partplot.axis('square')
+            globalplot.set_xlim([-0.1, 2.2])
+            globalplot.set_ylim([-0.1, 2.2])
+            dist_x = max(abs(min(pf.particles[0, :]) - x_pf[0, j]), abs(max(pf.particles[0, :]) - x_pf[0, j]))
+            dist_y = max(abs(min(pf.particles[1, :]) - x_pf[1, j]), abs(max(pf.particles[1, :]) - x_pf[1, j]))
+            distancia2 = max(dist_x, dist_y, 0.05)
+            distancia = max(dist_x, dist_y, 0.05, prev_distancia)
+            # ax[1].set_xlim([real_position[0, i] - 0.05, real_position[0, i] + 0.05])
+            # ax[1].set_ylim([real_position[1, i] - 0.05, real_position[1, i] + 0.05])
+            # partplot.set_xlim([x_pf[0, j] - 0.05, x_pf[0, j] + 0.05])
+            # partplot.set_ylim([x_pf[1, j] - 0.05, x_pf[1, j] + 0.05])
+            partplot.set_xlim([x_pf[0, j] - distancia, x_pf[0, j] + distancia])
+            partplot.set_ylim([x_pf[1, j] - distancia, x_pf[1, j] + distancia])
+            if 50 <= i <= 450:
+                fig.suptitle('Time step: ' + str(i) + ' (time = ' + str(round(i * robot.Ts, 2)) + ' sec)' + '\n' + ' (No OptiTrack measurements)')
+            else:
+                fig.suptitle('Time step: ' + str(i) + ' (time = ' + str(round(i * robot.Ts, 2)) + ' sec)')
+            truevelocity = x2[1, i]
+            partplot.set_title("Particles = " + str(pf.ns) + ',  V = ' + str(round(truevelocity, 2)) + ' [m/s]')
+            globalplot.legend(loc='lower right')
+            globalplot.set_xlabel('x [m]'), partplot.set_xlabel('x [m]')
+            globalplot.set_ylabel('y [m]'), partplot.set_ylabel('y [m]')
+            prev_distancia = distancia2
+            plt.draw()
+            plt.pause(0.01)
 
 
 head_rmse = np.sqrt(((x2[4, :] - heading[0, :]) ** 2).mean())
@@ -329,13 +350,6 @@ gyro2 = qt.gyr_from_quat(q, 1 / robot.Ts)
 gyr2 = qt.quaternion_rotate(q_pitch2, gyro2)
 
 plt.ioff()
-# PLOTS
-plot_gyroscope_measurements = False
-plot_accelerometer_measurements = False
-plot_slip_detection = True
-plot_execution_time = True
-plot_heading_and_inclination = True
-plot_position = True
 
 # Gyroscope
 if plot_gyroscope_measurements:
@@ -409,7 +423,7 @@ if plot_execution_time:
 
 # Heading and inclination
 if plot_heading_and_inclination:
-    fig5, ax5 = plt.subplots(2)
+    fig5, ax5 = plt.subplots(3)
     ax5[0].plot(t, x2[4, :] * 180 / np.pi, 'r')
     ax5[0].plot(t, heading[0, :] * 180 / np. pi, '--')
     ax5[0].set_ylabel('deg')
@@ -419,6 +433,8 @@ if plot_heading_and_inclination:
     ax5[1].plot(t, heading[1, :] * 180 / np.pi, '--')
     ax5[1].set_ylabel('deg')
     ax5[1].title.set_text('Inclination')
+
+    ax5[2].plot(t, (x2[4, :] - heading[0, :]) * 180 / np.pi, 'y')
 
     # ax3[2].plot(t, x2[2, :] * 180 / np.pi, 'r')
     # ax3[2].plot(t, euler[1, :] * 180 / np.pi, '--')
@@ -439,14 +455,27 @@ if plot_position:
     plt.legend(['travelled path', 'estimated path'])
 
 # Additional Plots
+# fig7, ax7 = plt.subplots(2)
+# ax7[0].plot(t, al_enc, 'r')
+# ax7[0].plot(t, al_est, '--')
+# ax7[0].legend(['acc from enc derivation', 'acc from accelerometer'])
+# ax7[1].plot(t, x2[1, :])
+# ax7[1].plot(t, x_pf[2, :], '--')
+# ax7[1].plot(t, vel_enc, 'y')
+# ax7[1].legend(['Real velocity', 'Estimated velocity', 'Encoder velocity'])
 fig7, ax7 = plt.subplots(2)
-ax7[0].plot(t, al_enc, 'r')
-ax7[0].plot(t, al_est, '--')
-ax7[0].legend(['acc from enc derivation', 'acc from accelerometer'])
-ax7[1].plot(t, x2[1, :])
-ax7[1].plot(t, x_pf[2, :], '--')
-ax7[1].plot(t, vel_enc, 'y')
-ax7[1].legend(['Real velocity', 'Estimated velocity', 'Encoder velocity'])
+ax7[0].plot(t, x2[4, :], 'r')
+ax7[0].plot(t, head_from_enc, '--')
+ax7[1].plot(t, x2[4, :] - head_from_enc)
+# Gyroscope Bias
+if plot_gyroscope_bias:
+    fig8, ax8 = plt.subplots(3)
+    ax8[0].plot(t, gyro_bias[0, :], 'b')
+    ax8[0].plot(t, np.ones(N) * gyr_bias[0], 'r')
+    ax8[1].plot(t, gyro_bias[1, :], 'b')
+    ax8[1].plot(t, np.ones(N) * gyr_bias[1], 'r')
+    ax8[2].plot(t, gyro_bias[2, :], 'b')
+    ax8[2].plot(t, np.ones(N) * gyr_bias[2], 'r')
 
 plt.grid()
 plt.show()
