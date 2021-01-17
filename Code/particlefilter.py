@@ -70,9 +70,10 @@ class ParticleFilter:
         wk = np.zeros(self.ns)
 
         variance = np.array([np.var(xkm1[0, :]), np.var(xkm1[1, :]), np.var(xkm1[2, :])])
+        sigma = 0.01
 
         for i in range(0, self.ns):
-            xk[:, i] = system_update2(xkm1[:, i], uk, ts, sigma=0.01)
+            xk[:, i] = system_update2(xkm1[:, i], uk, ts, sigma=sigma)
 
             if yk.size == 0:
                 wk[i] = 1 / self.ns
@@ -130,7 +131,6 @@ def system_update2(xkm1, uk, ts, sigma):
     # Noise depending on the velocity
     vk = np.random.normal(0, sigma)
     y = 0.1 * xkm1[2] * ts * (2 * np.random.rand() - 1)
-
     x = np.zeros(3)
     x[0] = xkm1[0] + xkm1[2] * ts * np.cos(uk[1]) #- y * np.sin(uk[1])
     x[1] = xkm1[1] + xkm1[2] * ts * np.sin(uk[1]) #+ y * np.cos(uk[1])
@@ -140,14 +140,15 @@ def system_update2(xkm1, uk, ts, sigma):
 
 
 def system_update3(xkm1, uk, ts, sigma):
-    # Noise depending on the heading and the velocity
+    # Noise depending on the velocity
     vk = np.random.normal(0, sigma)
-    heading_noise = 0.1 * (2 * np.random.rand() - 1)
+    y = 0.1 * xkm1[2] * ts * (2 * np.random.rand() - 1)
 
     x = np.zeros(3)
-    x[0] = xkm1[0] + xkm1[2] * ts * np.cos(uk[1] + np.deg2rad(heading_noise))
-    x[1] = xkm1[1] + xkm1[2] * ts * np.sin(uk[1] + np.deg2rad(heading_noise))
-    x[2] = xkm1[2] + uk[0] * ts + vk
+    xkm1[2] += vk
+    x[0] = xkm1[0] + xkm1[2] * ts * np.cos(uk[1])  # - y * np.sin(uk[1])
+    x[1] = xkm1[1] + xkm1[2] * ts * np.sin(uk[1])  # + y * np.cos(uk[1])
+    x[2] = xkm1[2] + uk[0] * ts
 
     return x
 
@@ -166,7 +167,9 @@ def meas_update(xk, yk, uk=0):
 def p_yk_given_xk(yk, xk, uk, variance):
     if yk.size == 1:
         # prob = p_obs_noise(yk - meas_update(xk, yk, uk), 0, 0.1, variance)
-        prob = normpdf(yk - meas_update(xk, yk, uk), 0, 0.05)
+        prob = normpdf(yk - meas_update(xk, yk, uk), 0, 0.02)
+        if abs(yk) <= 0.01:
+            prob = normpdf(yk - meas_update(xk, yk, uk), 0, 0.001)
     elif yk.size == 2:
         distance = np.linalg.norm(xk[0:2] - yk[0:2], 2)
         prob = normpdf(distance, 0, 0.005)
