@@ -69,7 +69,6 @@ class ParticleFilter:
         xk = np.zeros((self.nx, self.ns))
         wk = np.zeros(self.ns)
 
-        variance = np.array([np.var(xkm1[0, :]), np.var(xkm1[1, :]), np.var(xkm1[2, :])])
         sigma = 0.01
 
         for i in range(0, self.ns):
@@ -78,17 +77,13 @@ class ParticleFilter:
             if yk.size == 0:
                 wk[i] = 1 / self.ns
             else:
-                wk[i] = wkm1[i] * p_yk_given_xk(yk, xk[:, i], uk, variance)
+                wk[i] = wkm1[i] * p_yk_given_xk(yk, xk[:, i], uk)
 
-        # xk[:, -1] = system_update(xkm1[:, -1], uk, ts, sigma=0)
-        # xk[-1, -1] = yk[-1]
-        # wk[-1] = wkm1[-1] * np.mean(p_yk_given_xk(yk, xk[:, -1], uk, variance))
-        # Normalize weight vector
-
-        if yk.size >= 2 and max(wk) <= 0.01:
+        if yk.size >= 2 and max(wk) <= 0.1:
             xk[0:2, 0] = yk[0:2]
-            wk[0] = wkm1[0] * p_yk_given_xk(yk, xk[:, i], uk, variance)
+            wk[0] = wkm1[0] * p_yk_given_xk(yk, xk[:, i], uk)
 
+        # Normalize weight vector
         wk += 1.e-100               # Avoid round-off to zero
         wk = wk / np.sum(wk)
 
@@ -100,10 +95,6 @@ class ParticleFilter:
         nt = resample_percentage * self.ns
 
         if neff < nt:
-            if yk.size > 1:
-                self.ns = 200
-            else:
-                self.ns = 200
             print('Resampling...' + '\n')
             xk, wk = resample(xk, wk, resampling_method, self.ns)
 
@@ -118,6 +109,7 @@ class ParticleFilter:
 
 
 def system_update(xkm1, uk, ts, sigma):
+    # Random noise added to the states
     noise = gen_sys_noise(xkm1[2], ts, uk[1], sigma=sigma)
     x = np.zeros(3)
     x[0] = xkm1[0] + xkm1[2] * ts * np.cos(uk[1]) + noise[0]
@@ -128,7 +120,7 @@ def system_update(xkm1, uk, ts, sigma):
 
 
 def system_update2(xkm1, uk, ts, sigma):
-    # Noise depending on the velocity
+    # Noise added to the velocity
     vk = np.random.normal(0, sigma)
     y = 0.1 * xkm1[2] * ts * (2 * np.random.rand() - 1)
     x = np.zeros(3)
@@ -140,15 +132,14 @@ def system_update2(xkm1, uk, ts, sigma):
 
 
 def system_update3(xkm1, uk, ts, sigma):
-    # Noise depending on the velocity
+    # Noise added to the velocity and the heading
     vk = np.random.normal(0, sigma)
+    uk[1] += np.random.normal(0, np.deg2rad(1))
     y = 0.1 * xkm1[2] * ts * (2 * np.random.rand() - 1)
-
     x = np.zeros(3)
-    xkm1[2] += vk
     x[0] = xkm1[0] + xkm1[2] * ts * np.cos(uk[1])  # - y * np.sin(uk[1])
     x[1] = xkm1[1] + xkm1[2] * ts * np.sin(uk[1])  # + y * np.cos(uk[1])
-    x[2] = xkm1[2] + uk[0] * ts
+    x[2] = xkm1[2] + uk[0] * ts + vk
 
     return x
 
@@ -164,12 +155,29 @@ def meas_update(xk, yk, uk=0):
     return x
 
 
-def p_yk_given_xk(yk, xk, uk, variance):
+def p_yk_given_xk(yk, xk, uk):
+    """
+    Computes the conditional probability P(yk|xk)
+
+    Parameters
+    ----------
+    yk : list
+        observation vector at time k
+    xk : list
+        the particle whose probability will be computed
+    uk : ndarray
+        input vector at time k
+
+    Returns
+    --------
+    prob : double
+        conditional probability of the particle
+    """
+
     if yk.size == 1:
-        # prob = p_obs_noise(yk - meas_update(xk, yk, uk), 0, 0.1, variance)
         prob = normpdf(yk - meas_update(xk, yk, uk), 0, 0.02)
-        if abs(yk) <= 0.01:
-            prob = normpdf(yk - meas_update(xk, yk, uk), 0, 0.001)
+        # if abs(yk) <= 0.01:
+        #     prob = normpdf(yk - meas_update(xk, yk, uk), 0, 0.001)
     elif yk.size == 2:
         distance = np.linalg.norm(xk[0:2] - yk[0:2], 2)
         prob = normpdf(distance, 0, 0.005)
@@ -246,11 +254,33 @@ def gen_x0(x, y, std, ns):
 
 
 def resample(xk, wk, resampling_method, n):
-    resampling_methods = {'multinomial_resampling' : multinomial_resampling,
-                          'systematic_resampling' : systematic_resampling,
-                          'residual_resampling' : residual_resampling,
+    """
+    Resamples the particle set according to the specified method
+
+    Parameters
+    ----------
+    xk : list
+        set of particles
+    wk : list
+        the weights of the particles
+    resampling_method : str
+        resampling technique to be used
+    n : double
+        number of particles
+
+    Returns
+    --------
+    xk : list
+        new set of resampled particles
+    wk : list
+        normalized weights of the new set of particles
+    """
+
+    resampling_methods = {'multinomial_resampling': multinomial_resampling,
+                          'systematic_resampling': systematic_resampling,
+                          'residual_resampling': residual_resampling,
                           'residual_resampling2': residual_resampling2,
-                          'stratified_resampling' : stratified_resampling}
+                          'stratified_resampling': stratified_resampling}
     indx = resampling_methods[resampling_method](wk, n)
     indx = indx.astype(int)
     xk = xk[:, indx]

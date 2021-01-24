@@ -376,14 +376,3 @@ def random_walk(bias, variance, limit):
         return -limit
     else:
         return new_bias
-
-
-def quat_mult(a, b):
-    a1, b1, c1, d1 = a
-    a2, b2, c2, d2 = b
-    q0 = a1 * a2 - b1 * b2 - c1 * c2 - d1 * d2
-    q1 = a1 * b2 + b1 * a2 + c1 * d2 - d1 * c2
-    q2 = a1 * c2 - b1 * d2 + c1 * a2 + d1 * b2
-    q3 = a1 * d2 + b1 * c2 - c1 * b2 + d1 * a2
-
-    return np.array([q0, q1, q2, q3])
